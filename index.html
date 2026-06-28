@@ -303,15 +303,16 @@ const MATCHES=[
 // For group sharing: the first person to open the app creates the blob,
 // then the blob ID is shared via the URL hash (#blobid=xxx).
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+// ─────────────────────────────────────────────────────
+// SHARED STORAGE — Supabase Client Setup
+// ─────────────────────────────────────────────────────
+// Add your actual details here from your Supabase settings
+const SUPABASE_URL = 'https://your-project-id.supabase.co';
+const SUPABASE_ANON_KEY = 'your-actual-anon-public-key';
 
-<script>
-// Your unique Supabase Project Details (Replace with yours from Project Settings > API)
-const SUPABASE_URL = 'https://heclfjmkdjmjdyxplpqv.supabase.co/rest/v1/';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...your-actual-anon-key';
-
-// Initialize the Supabase client globally
+// Initialize the Supabase Client
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 let STORE = {};
 let liveScores = {};
 
@@ -323,94 +324,73 @@ function syncStatus(state, msg) {
   txt.textContent = msg;
 }
 
+// Replaces your old initStorage() function
 async function initStorage() {
-  syncStatus('busy', 'Connecting…');
-  // Check URL hash for shared blob ID
-  const hash = location.hash.replace('#','');
-  if (hash.startsWith('blob=')) {
-    BLOB_ID = hash.slice(5);
-    localStorage.setItem('wc26_blob', BLOB_ID);
-  } else {
-    BLOB_ID = localStorage.getItem('wc26_blob');
-  }
-
-  if (BLOB_ID) {
-    // Try to load existing blob
-    try {
-      const r = await fetch(`${BASE}/${BLOB_ID}`, {
-        headers: {'Accept':'application/json'}, cache:'no-store'
-      });
-      if (r.ok) {
-        STORE = await r.json();
-        syncStatus('ok', 'Synced ✓');
-        updateShareURL();
-        return;
-      }
-    } catch(e) {}
-  }
-
-  // Create new blob
+  syncStatus('busy', 'Connecting to database…');
   try {
-    const r = await fetch(BASE, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', 'Accept':'application/json'},
-      body: JSON.stringify({})
-    });
-    if (r.ok) {
-      const loc = r.headers.get('Location') || '';
-      BLOB_ID = loc.split('/').pop();
-      if (!BLOB_ID) {
-        const d = await r.json();
-        BLOB_ID = d.blobId || String(Date.now());
-      }
-      localStorage.setItem('wc26_blob', BLOB_ID);
-      STORE = {};
-      syncStatus('ok', 'Ready ✓');
-      updateShareURL();
-    } else {
-      throw new Error('create failed');
-    }
+    await pullStore();
+    syncStatus('ok', 'Synced ✓');
   } catch(e) {
-    syncStatus('err', 'Offline — data saved locally only');
+    syncStatus('err', 'Offline — using local backup');
     loadLocal();
   }
 }
 
-function updateShareURL() {
-  if (BLOB_ID) {
-    const url = location.href.split('#')[0] + '#blob=' + BLOB_ID;
-    history.replaceState(null, '', url);
-    document.getElementById('share-url-val') && (document.getElementById('share-url-val').value = url);
-  }
-}
-
+// Uploads a user's predictions to the cloud dynamically
 async function pushStore() {
-  // Always save locally
+  // Always create a quick local fallback save
   try { localStorage.setItem('wc26_bak', JSON.stringify(STORE)); } catch(e){}
-  if (!BLOB_ID) { syncStatus('err','No storage ID'); return false; }
-  syncStatus('busy','Saving…');
+  
+  const currentName = document.getElementById('pname').value;
+  if (!currentName || !STORE[currentName]) return false;
+
+  syncStatus('busy', 'Saving cloud data…');
+  
   try {
-    const r = await fetch(`${BASE}/${BLOB_ID}`, {
-      method: 'PUT',
-      headers: {'Content-Type':'application/json', 'Accept':'application/json'},
-      body: JSON.stringify(STORE)
-    });
-    if (r.ok) { syncStatus('ok','Synced ✓'); return true; }
-    throw new Error('PUT ' + r.status);
+    // This upserts (Inserts if new, Updates if already exists) the row for this user
+    const { data, error } = await supabase
+      .from('predictions')
+      .upsert({
+        player_name: currentName,
+        predictions_json: STORE[currentName].preds,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'player_name' });
+
+    if (error) throw error;
+
+    syncStatus('ok', 'Synced ✓');
+    return true;
   } catch(e) {
-    syncStatus('err','Sync failed — saved locally');
+    console.error(e);
+    syncStatus('err', 'Sync failed — saved locally');
     return false;
   }
 }
 
+// Pulls down everyone's predictions from the database
 async function pullStore() {
-  if (!BLOB_ID) return;
   try {
-    const r = await fetch(`${BASE}/${BLOB_ID}`, {
-      headers:{'Accept':'application/json'}, cache:'no-store'
-    });
-    if (r.ok) { STORE = await r.json(); syncStatus('ok','Synced ✓'); }
-  } catch(e) { syncStatus('err','Offline'); }
+    const { data, error } = await supabase
+      .from('predictions')
+      .select('*');
+
+    if (error) throw error;
+
+    // Format the database rows back into your application's STORE object structure
+    if (data) {
+      data.forEach(row => {
+        STORE[row.player_name] = {
+          name: row.player_name,
+          preds: row.predictions_json,
+          t: new Date(row.updated_at).getTime()
+        };
+      });
+    }
+    syncStatus('ok', 'Synced ✓');
+  } catch(e) {
+    console.error(e);
+    syncStatus('err', 'Connection lost');
+  }
 }
 
 function loadLocal() {

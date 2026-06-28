@@ -303,8 +303,16 @@ const MATCHES=[
 // For group sharing: the first person to open the app creates the blob,
 // then the blob ID is shared via the URL hash (#blobid=xxx).
 
-const BASE = 'https://jsonblob.com/api/jsonBlob';
-let BLOB_ID = null;
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+// Your unique Supabase Project Details (Replace with yours from Project Settings > API)
+const SUPABASE_URL = 'https://heclfjmkdjmjdyxplpqv.supabase.co/rest/v1/';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...your-actual-anon-key';
+
+// Initialize the Supabase client globally
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 let STORE = {};
 let liveScores = {};
 
